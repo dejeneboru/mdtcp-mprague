@@ -1,0 +1,1 @@
+/home/doljira/Linux-5.4/scripts/gdb/vmlinux-gdb.py
