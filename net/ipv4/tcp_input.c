@@ -3694,6 +3694,7 @@ static u32 tcp_newly_delivered(struct sock *sk, u32 prior_delivered,
         u32 delivered;
 
 	delivered = tp->delivered - prior_delivered;
+        NET_ADD_STATS(net, LINUX_MIB_TCPDELIVERED, delivered);
         if (saw_ece) {
 		if (tcp_accecn_ok(tp)) {
 			if (
@@ -3709,7 +3710,7 @@ static u32 tcp_newly_delivered(struct sock *sk, u32 prior_delivered,
 		}
 		tp->delivered_ce += delivered_ce;
 		NET_ADD_STATS(net, LINUX_MIB_TCPDELIVEREDCE, delivered_ce);
-		NET_ADD_STATS(net, LINUX_MIB_TCPDELIVEREDCE, delivered);
+		
 	}
   end:
 	return delivered;

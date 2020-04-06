@@ -323,7 +323,7 @@ static void mprague_update_window(struct sock *sk,
 	/* Do not increase cwnd for ACKs indicating congestion */
 	if (rs->is_ece ) {
 		mprague_ca(sk)->saw_ce = true;
-		//return; /*commented in prague*/
+		return; /*commented in orignal prague code*/
 	}
 	/* We don't implement PRR at the moment... */
 	/* if (inet_csk(sk)->icsk_ca_state != TCP_CA_Open)
