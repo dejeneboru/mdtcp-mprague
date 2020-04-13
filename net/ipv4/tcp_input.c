@@ -354,45 +354,45 @@ reject:
 }
 /* See Table 2 of the AccECN draft */
 static void tcp_ecn_rcv_synack(struct tcp_sock *tp, const struct tcphdr *th,
-			       u8 ip_dsfield)
- {
+		u8 ip_dsfield)
+{
 	u8 ace = tcp_accecn_ace(th);
 
 	switch (ace) {
-	case 0:
-	case 7:
-	case 5:
-		tcp_set_ecn_status(tp, TCP_ECN_DISABLED);
-		break;
-	case 1:
-		if (tcp_ecn_ok(tp))
-			/* Downgrade from AccECN, or requested initially */
-			tcp_set_ecn_status(tp, TCP_ECN_OK);
-		else
+		case 0:
+		case 7:
+		case 5:
 			tcp_set_ecn_status(tp, TCP_ECN_DISABLED);
+			break;
+		case 1:
+			if (tcp_ecn_ok(tp))
+				/* Downgrade from AccECN, or requested initially */
+				tcp_set_ecn_status(tp, TCP_ECN_OK);
+			else
+				tcp_set_ecn_status(tp, TCP_ECN_DISABLED);
 
-		break;
-	default:
-		/* Sending the final packet of the 3WHS will move the ecn status
-		 * to TCP_ACCECN_OK */
-		if (tcp_accecn_syn_feedback(tp, ace, tcp_accecn_snt_ect(tp),
-					    TCP_ACCECN_PENDING))
-			tcp_accecn_set_rcv_ect(tp, ip_dsfield & INET_ECN_MASK);
-		break;
+			break;
+		default:
+			/* Sending the final packet of the 3WHS will move the ecn status
+			 * to TCP_ACCECN_OK */
+			if (tcp_accecn_syn_feedback(tp, ace, tcp_accecn_snt_ect(tp),
+						TCP_ACCECN_PENDING))
+				tcp_accecn_set_rcv_ect(tp, ip_dsfield & INET_ECN_MASK);
+			break;
 	}
- }
+}
 
 static void tcp_ecn_rcv_syn(struct tcp_sock *tp, const struct tcphdr *th,
-			    const struct sk_buff *skb)
- {
+		const struct sk_buff *skb)
+{
 	if (tcp_ecn_status(tp) == TCP_ACCECN_PENDING) {
 		if (!tcp_accecn_syn_requested(th))
 			/* Downgrade to classic ECN feedback */
 			tcp_set_ecn_status(tp, TCP_ECN_OK);
 		else
 			tcp_accecn_set_rcv_ect(tp,
-					       TCP_SKB_CB(skb)->ip_dsfield &
-					       INET_ECN_MASK);
+					TCP_SKB_CB(skb)->ip_dsfield &
+					INET_ECN_MASK);
 	}
 	if (tcp_ecn_status(tp) == TCP_ECN_OK && (!th->ece || !th->cwr))
 		tcp_set_ecn_status(tp, TCP_ECN_DISABLED);
@@ -403,19 +403,19 @@ static int tcp_ecn_rcv_ecn_echo(struct sock *sk, const struct tcphdr *th)
 	struct tcp_sock *tp = tcp_sk(sk);
 
 	WARN(tcp_ecn_status(tp) == TCP_ACCECN_PENDING &&
-	     /* In TCP_SYN_SENT, we will parse the SYN+ACK through tcp_ack()
-	      * before sending the final ACK of the 3WHS--which will move us
-	      * to TCP_ACCECN_OK after echoing the SYN+ACK ECT codepoint.
-	      */
-	     sk->sk_state == TCP_ESTABLISHED,
-	     "Incomplete AccECN negociation in an ESTABLISHED connection!\n");
+			/* In TCP_SYN_SENT, we will parse the SYN+ACK through tcp_ack()
+			 * before sending the final ACK of the 3WHS--which will move us
+			 * to TCP_ACCECN_OK after echoing the SYN+ACK ECT codepoint.
+			 */
+			sk->sk_state == TCP_ESTABLISHED,
+			"Incomplete AccECN negociation in an ESTABLISHED connection!\n");
 	switch (tcp_ecn_status(tp)) {
-	case TCP_ACCECN_OK:
-		return (tcp_accecn_ace(th) + 8 - (tp->delivered_ce & 7)) & 7;
-	case TCP_ECN_OK:
-		return th->ece && !th->syn;
-	default:
-		return 0;
+		case TCP_ACCECN_OK:
+			return (tcp_accecn_ace(th) + 8 - (tp->delivered_ce & 7)) & 7;
+		case TCP_ECN_OK:
+			return th->ece && !th->syn;
+		default:
+			return 0;
 	}
 }
 
@@ -1143,27 +1143,16 @@ void tcp_skb_mark_lost_uncond_verify(struct tcp_sock *tp, struct sk_buff *skb)
  *         u     e      n                         u_w   e_w  s n_w
  *         |     |      |                          |     |   |  |
  * |<------------+------+----- TCP seqno space --------------+---------->|
-* ...-- <2^31 ->|                                           |<--------...
-	      * ...---- >2^31 ------>|                                    |<--------...
-		     *
-		      * Current code wouldn't be vulnerable but it's better still to discard such
-			    * crazy SACK blocks. Doing this check for start_seq alone closes somewhat
-				   * similar case (end_seq after snd_nxt wrap) as earlier reversed check in
-					  * snd_nxt wrap -> snd_una region will then become "well defined", i.e.,
-					  * equal to the ideal case (infinite seqno space without wrap caused issues).
-						 *
-						  * With D-SACK the lower bound is extended to cover sequence space below
-							* SND.UNA down to undo_marker, which is the last point of interest. Yet
-							       * again, D-SACK block must not to go across snd_una (for the same reason as
-									       * for the normal SACK blocks, explained above). But there all simplicity
-									     * ends, TCP might receive valid D-SACKs below that. As long as they reside
-									     * fully below undo_marker they do not affect behavior in anyway and can
-									     * therefore be safely ignored. In rare cases (which are more or less
-											     * theoretical ones), the D-SACK will nicely cross that boundary due to skb
-											   * fragmentation and packet reordering past skb's retransmission. To consider
-											   * them correctly, the acceptable range must be extended even more though
-											   * the exact amount is rather hard to quantify. However, tp->max_window can
-											   * be used as an exaggerated estimate.
+* ...-- <2^31 ->|                                           |<--------... ...---- >2^31 ------>| |<--------...
+	      *Current code wouldn't be vulnerable but it's better still to discard such crazy SACK blocks. Doing this check for start_seq alone closes somewhat
+		     *similar case (end_seq after snd_nxt wrap) as earlier reversed check in snd_nxt wrap -> snd_una region will then become "well defined", i.e.,
+		     *equal to the ideal case (infinite seqno space without wrap caused issues). With D-SACK the lower bound is extended to cover sequence space below 
+			    *SND.UNA down to undo_marker, which is the last point of interest. Yet again, D-SACK block must not to go across snd_una (for the same reason as
+					    *for the normal SACK blocks, explained above). But there all simplicity ends, TCP might receive valid D-SACKs below that. As long as they reside
+						 *fully below undo_marker they do not affect behavior in anyway and can therefore be safely ignored. In rare cases (which are more or less theoretical ones), 
+						 *the D-SACK will nicely cross that boundary due to skb fragmentation and packet reordering past skb's retransmission. To consider
+							*them correctly, the acceptable range must be extended even more though the exact amount is rather hard to quantify. However, tp->max_window can
+							       *be used as an exaggerated estimate.
 	*/
 	  static bool tcp_is_sackblock_valid(struct tcp_sock *tp, bool is_dsack,
 			  u32 start_seq, u32 end_seq)
@@ -1455,7 +1444,7 @@ static bool tcp_shifted_skb(struct sock *sk, struct sk_buff *prev,
 	}
 
 	TCP_SKB_CB(prev)->tcp_flags |= TCP_SKB_CB(skb)->tcp_flags;
-        TCP_SKB_CB(prev)->tcp_res_flags |= TCP_SKB_CB(skb)->tcp_res_flags;
+	TCP_SKB_CB(prev)->tcp_res_flags |= TCP_SKB_CB(skb)->tcp_res_flags;
 	if (tcp_accecn_ok(tp))
 		tcp_accecn_copy_skb_cb_ace(skb, prev);
 	TCP_SKB_CB(prev)->eor = TCP_SKB_CB(skb)->eor;
@@ -3686,22 +3675,22 @@ static void tcp_xmit_recovery(struct sock *sk, int rexmit)
 
 /* Returns the number of packets newly acked or sacked by the current ACK */
 static u32 tcp_newly_delivered(struct sock *sk, u32 prior_delivered,
-			       u32 saw_ece, u8 flag)
+		u32 saw_ece, u8 flag)
 {
 	const struct net *net = sock_net(sk);
 	struct tcp_sock *tp = tcp_sk(sk);
 	u32 delivered_ce = 0;
-        u32 delivered;
+	u32 delivered;
 
 	delivered = tp->delivered - prior_delivered;
-        NET_ADD_STATS(net, LINUX_MIB_TCPDELIVERED, delivered);
-        if (saw_ece) {
+	NET_ADD_STATS(net, LINUX_MIB_TCPDELIVERED, delivered);
+	if (saw_ece) {
 		if (tcp_accecn_ok(tp)) {
 			if (
-			    /* (flag & (FLAG_SND_UNA_ADVANCED | FLAG_NOT_DUP | */
-				     /* FLAG_DATA_SACKED)) || */
-			    (tp->rx_opt.saw_tstamp &&
-			     tp->rx_opt.rcv_tsval >= tp->rx_opt.ts_recent))
+					/* (flag & (FLAG_SND_UNA_ADVANCED | FLAG_NOT_DUP | */
+					/* FLAG_DATA_SACKED)) || */
+					(tp->rx_opt.saw_tstamp &&
+					 tp->rx_opt.rcv_tsval >= tp->rx_opt.ts_recent))
 				delivered_ce = saw_ece;
 			else
 				goto end;
@@ -3710,9 +3699,9 @@ static u32 tcp_newly_delivered(struct sock *sk, u32 prior_delivered,
 		}
 		tp->delivered_ce += delivered_ce;
 		NET_ADD_STATS(net, LINUX_MIB_TCPDELIVEREDCE, delivered_ce);
-		
+
 	}
-  end:
+end:
 	return delivered;
 }
 
@@ -3746,7 +3735,7 @@ static int tcp_ack(struct sock *sk, struct sk_buff *skb, int flag)
 	int rexmit = REXMIT_NONE; /* Flag to (re)transmit to recover losses */
 	bool use_fast_path;
 	int saw_ece = 0; /* Did we receive ECE/an AccECN ACE update? */
-        u32 prior_fack;
+	u32 prior_fack;
 
 	sack_state.first_sackt = 0;
 	sack_state.rate = &rs;
@@ -3792,7 +3781,7 @@ static int tcp_ack(struct sock *sk, struct sk_buff *skb, int flag)
 	 */
 	if (flag & FLAG_UPDATE_TS_RECENT)
 		tcp_replace_ts_recent(tp, TCP_SKB_CB(skb)->seq);
-                use_fast_path = (flag & (FLAG_SLOWPATH | FLAG_SND_UNA_ADVANCED)) ==
+	use_fast_path = (flag & (FLAG_SLOWPATH | FLAG_SND_UNA_ADVANCED)) ==
 		FLAG_SND_UNA_ADVANCED;
 	if (use_fast_path) {
 		/* Window is constant, pure forward advance.
@@ -3807,7 +3796,7 @@ static int tcp_ack(struct sock *sk, struct sk_buff *skb, int flag)
 
 		NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPHPACKS);
 	} else {
-		
+
 		if (ack_seq != TCP_SKB_CB(skb)->end_seq)
 			flag |= FLAG_DATA;
 		else
@@ -3818,11 +3807,11 @@ static int tcp_ack(struct sock *sk, struct sk_buff *skb, int flag)
 		if (TCP_SKB_CB(skb)->sacked)
 			flag |= tcp_sacktag_write_queue(sk, skb, prior_snd_una,
 					&sack_state);
-                     saw_ece = tcp_ecn_rcv_ecn_echo(sk, tcp_hdr(skb));
-                     if (saw_ece > 0)
+		saw_ece = tcp_ecn_rcv_ecn_echo(sk, tcp_hdr(skb));
+		if (saw_ece > 0)
 			flag |= FLAG_ECE;
-			
-		}
+
+	}
 
 	/* We passed data and got it acked, remove any soft error
 	 * log. Something worked...
@@ -3867,13 +3856,13 @@ static int tcp_ack(struct sock *sk, struct sk_buff *skb, int flag)
 
 	if ((flag & FLAG_FORWARD_PROGRESS) || !(flag & FLAG_NOT_DUP))
 		sk_dst_confirm(sk);
-        delivered = tcp_newly_delivered(sk, delivered, saw_ece, flag);
+	delivered = tcp_newly_delivered(sk, delivered, saw_ece, flag);
 	if (!use_fast_path)
 		tcp_ack_finish_slowpath(sk, flag);
 	lost = tp->lost - lost;			/* freshly marked lost */
 	rs.is_ack_delayed = !!(flag & FLAG_ACK_MAYBE_DELAYED);
 	rs.is_ece = saw_ece > 0;
-        tcp_rate_gen(sk, delivered, lost, is_sack_reneg, sack_state.rate);
+	tcp_rate_gen(sk, delivered, lost, is_sack_reneg, sack_state.rate);
 	tcp_cong_control(sk, ack, delivered, flag, sack_state.rate);
 	tcp_xmit_recovery(sk, rexmit);
 	return 1;
@@ -3883,7 +3872,7 @@ no_queue:
 	if (flag & FLAG_DSACKING_ACK) {
 		tcp_fastretrans_alert(sk, prior_snd_una, num_dupack, &flag,
 				&rexmit);
-	       tcp_newly_delivered(sk, delivered, saw_ece, flag);
+		tcp_newly_delivered(sk, delivered, saw_ece, flag);
 		if (!use_fast_path)
 			tcp_ack_finish_slowpath(sk, flag);
 	}
@@ -4626,7 +4615,7 @@ static bool tcp_try_coalesce(struct sock *sk,
 	TCP_SKB_CB(to)->end_seq = TCP_SKB_CB(from)->end_seq;
 	TCP_SKB_CB(to)->ack_seq = TCP_SKB_CB(from)->ack_seq;
 	TCP_SKB_CB(to)->tcp_flags |= TCP_SKB_CB(from)->tcp_flags;
-        TCP_SKB_CB(to)->tcp_res_flags |= TCP_SKB_CB(from)->tcp_res_flags;
+	TCP_SKB_CB(to)->tcp_res_flags |= TCP_SKB_CB(from)->tcp_res_flags;
 	if (tcp_accecn_ok(tcp_sk(sk)))
 		tcp_accecn_copy_skb_cb_ace(from, to);
 	if (TCP_SKB_CB(from)->has_rxtstamp) {
@@ -5780,7 +5769,7 @@ void tcp_rcv_established(struct sock *sk, struct sk_buff *skb)
 
 	/* TCP congestion window tracking */
 	trace_tcp_probe(sk, skb);
-        /* AccECN ACE counter tracks *all* segments, including pure acks, ... */
+	/* AccECN ACE counter tracks *all* segments, including pure acks, ... */
 	if (INET_ECN_is_ce(TCP_SKB_CB(skb)->ip_dsfield))
 		++tp->received_ce;
 	tcp_mstamp_refresh(tp);
@@ -6176,8 +6165,8 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
 		 *    (our SYN has been ACKed), change the connection
 		 *    state to ESTABLISHED..."
 		 */
-                tcp_ecn_rcv_synack(tp, th, TCP_SKB_CB(skb)->ip_dsfield);
-		
+		tcp_ecn_rcv_synack(tp, th, TCP_SKB_CB(skb)->ip_dsfield);
+
 
 		tcp_init_wl(tp, TCP_SKB_CB(skb)->seq);
 		tcp_try_undo_spurious_syn(sk);
@@ -6342,8 +6331,8 @@ discard:
 		tp->snd_wnd    = ntohs(th->window);
 		tp->snd_wl1    = TCP_SKB_CB(skb)->seq;
 		tp->max_window = tp->snd_wnd;
-                tcp_ecn_rcv_syn(tp, th, skb);
-		
+		tcp_ecn_rcv_syn(tp, th, skb);
+
 
 		tcp_mtup_init(sk);
 		tcp_sync_mss(sk, icsk->icsk_pmtu_cookie);
@@ -6741,8 +6730,8 @@ static void tcp_ecn_create_request(struct request_sock *req,
 	bool th_ecn = th->ece && th->cwr;
 	bool ect, ecn_ok;
 	u32 ecn_ok_dst;
-        if (tcp_accecn_syn_requested(th) &&
-	    (net->ipv4.sysctl_tcp_ecn || tcp_ca_needs_accecn(listen_sk))) {
+	if (tcp_accecn_syn_requested(th) &&
+			(net->ipv4.sysctl_tcp_ecn || tcp_ca_needs_accecn(listen_sk))) {
 		inet_rsk(req)->ecn_ok = 1;
 		tcp_rsk(req)->accecn_ok = 1;
 		tcp_rsk(req)->ect_rcv =
@@ -6778,7 +6767,7 @@ static void tcp_openreq_init(struct request_sock *req,
 	tcp_rsk(req)->accecn_ok = 0;
 	tcp_rsk(req)->ect_rcv = 0;
 	tcp_rsk(req)->ect_snt = 0;
-        req->mss = rx_opt->mss_clamp;
+	req->mss = rx_opt->mss_clamp;
 	req->ts_recent = rx_opt->saw_tstamp ? rx_opt->rcv_tsval : 0;
 	ireq->tstamp_ok = rx_opt->tstamp_ok;
 	ireq->sack_ok = rx_opt->sack_ok;

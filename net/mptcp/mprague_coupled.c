@@ -283,8 +283,7 @@ static void mprague_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 		return;
 	}
 
-	if (!tcp_is_cwnd_limited(sk))
-	{      
+	if (!tcp_is_cwnd_limited(sk)){      
 		return;
 	}
 	if (tcp_in_slow_start(tp)) {
@@ -323,7 +322,7 @@ static void mprague_update_window(struct sock *sk,
 	/* Do not increase cwnd for ACKs indicating congestion */
 	if (rs->is_ece ) {
 		mprague_ca(sk)->saw_ce = true;
-		return; /*commented in orignal prague code*/
+		//return; /*commented in orignal prague code*/
 	}
 	/* We don't implement PRR at the moment... */
 	/* if (inet_csk(sk)->icsk_ca_state != TCP_CA_Open)

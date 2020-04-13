@@ -881,8 +881,8 @@ static void tcp_tsq_handler(struct sock *sk)
 	if (!sock_owned_by_user(meta_sk)) {
 		tcp_tsq_write(sk);
 
-		//if (mptcp(tp))
-		//	tcp_tsq_write(meta_sk);
+		if (mptcp(tp))
+			tcp_tsq_write(meta_sk);
 	} else {
 		if (!test_and_set_bit(TCP_TSQ_DEFERRED, &meta_sk->sk_tsq_flags))
 			sock_hold(meta_sk);
