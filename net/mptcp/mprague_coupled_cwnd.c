@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0
+
 /* TCP Prague congestion control.
  *
  * This congestion-control, part of the L4S architecture, achieves low loss,
@@ -13,34 +13,7 @@
  *
  * Notable changes from DCTCP:
  *
- * 1/ RTT independence:
- * mprague will operate in a given RTT region as if it was experiencing a target
- * RTT (default=10ms), while preserving the responsiveness it is able to
- * achieve due to its base RTT (i.e., quick reaction to sudden congestion
- * increase). This enable short RTT flows to co-exist with long RTT ones (e.g.,
- * intra-DC flows competing vs internet traffic) without causing starvation or
- * saturating the ECN signal, without the need for Diffserv/bandwdith
- * reservation.
- *
- * This is achieved by scaling cwnd growth during Additive Increase, thus
- * leaving room for higher RTT flows to grab a larger bandwidth share while at
- * the same time relieving the pressure on bottleneck link hence lowering the
- * overall marking probability.
- *
- * Given that this slows short RTT flows, this behavior only makes sense for
- * long-running flows that actually need to share the link--as opposed to,
- * e.g., RPC traffic. To that end, flows progressively become more RTT
- * independent as they grow "older".
- *
- * The different scaling heuristics enable to perform different tradeoffs, most
- * notabley between absolute rate fairness (e.g., RTT_CONTROL_RATE) and
- * scalability (e.g., RTT_CONTROL_SCALABLE aims to get at least 2 marks every
- * 8ish RTTs for flows with an e2e RTT < 100us, up to the classical 2 marks per
- * RTT for flows operating at the target RTT or above it).
- *
- *   TODO(otilmans)--#paper-ref.
- *
- * 2/ Updated EWMA:
+ * 1/ Updated EWMA:
  * The resolution of alpha has been increased to ensure that a low amount of
  * marks over high-BDP paths can be accurately taken into account in the
  * computation.
@@ -50,7 +23,7 @@
  * updates (similarly to how tp->srtt_us is maintained, as opposed to
  * dctcp->alpha).
  *
- * 3/ Updated cwnd management code
+ * 2/ Updated cwnd management code
  * In order to operate with a permanent, (very) low, marking probability, the
  * arithmetic around cwnd has been updated to track its decimals alongside its
  * integer part. This both improve the precision, avoiding avalanche effects as
@@ -61,7 +34,7 @@
  * Finally, when deriving the cwnd reduction from alpha, we ensure that the
  * computed value is unbiased wrt. integer rounding.
  *
- * 4/ Additive Increase uses unsaturated marking
+ * 3/ Additive Increase uses unsaturated marking
  * Given that L4S AQM may induce randomly applied CE marks (e.g., from the PI2
  * part of dualpi2), instead of full RTTs of marks once in a while that a step
  * AQM would cause, cwnd is updated for every ACK, regardless of the congestion
@@ -74,7 +47,7 @@
  *
  * See https://arxiv.org/abs/1904.07605 for more details around saturation.
  *
- * 5/ Pacing/tso sizing
+ * 4/ Pacing/tso sizing
  * mprague aims to keep queuing delay as low as possible. To that end, it is in
  * its best interest to pace outgoing segments (i.e., to smooth its traffic),
  * as well as impose a maximal GSO burst size to avoid instantaneous queue
@@ -96,45 +69,11 @@
 #define CWND_UNIT		20U
 #define ONE_CWND		(1LL << CWND_UNIT) /* Must be signed */
 #define MPRAGUE_SHIFT_G		4		/* EWMA gain g = 1/2^4 */
-#define DEFAULT_RTT_TRANSITION	100
-#define MAX_SCALED_RTT		(100 * USEC_PER_MSEC)
-#define RTT_UNIT		7
-#define RTT2US(x)		((x) << RTT_UNIT)
-#define US2RTT(x)		((x) >> RTT_UNIT)
-
-/* RTT cwnd scaling heuristics */
-enum {
-	/* No RTT independence */
-	RTT_CONTROL_NONE = 0,
-	/* Flows with e2e RTT <= target RTT achieve the same throughput */
-	RTT_CONTROL_RATE,
-	/* Trade some throughput balance at very low RTTs for a floor on the
-	 * amount of marks/RTT */
-	RTT_CONTROL_SCALABLE,
-	/* Behave as a flow operating with an extra target RTT */
-	RTT_CONTROL_ADDITIVE,
-
-	__RTT_CONTROL_MAX
-};
 
 static u32 mprague_burst_shift __read_mostly = 12; /* 1/2^12 sec ~=.25ms */
 MODULE_PARM_DESC(mprague_burst_shift,
-		 "maximal GSO burst duration as a base-2 negative exponent");
+		"maximal GSO burst duration as a base-2 negative exponent");
 module_param(mprague_burst_shift, uint, 0644);
-
-static u32 mprague_rtt_scaling __read_mostly = RTT_CONTROL_RATE;
-MODULE_PARM_DESC(mprague_rtt_scaling, "Enable RTT independence through the "
-		 "chosen RTT scaling heuristic");
-module_param(mprague_rtt_scaling, uint, 0644);
-
-static u32 mprague_rtt_target __read_mostly = 10 * USEC_PER_MSEC;
-MODULE_PARM_DESC(mprague_rtt_target, "RTT scaling target");
-module_param(mprague_rtt_target, uint, 0644);
-
-static int mprague_rtt_transition __read_mostly = DEFAULT_RTT_TRANSITION;
-MODULE_PARM_DESC(mprague_rtt_transition, "Amount of post-SS rounds to transition"
-		 " to be RTT independent.");
-module_param(mprague_rtt_transition, uint, 0644);
 
 static unsigned int beta_scale __read_mostly = 1024;
 module_param(beta_scale, uint, 0644);
@@ -155,19 +94,10 @@ struct mprague {
 	u32 old_delivered_ce;	/* tp->delivered_ce at round start */
 	u32 acked_ce;		/* tp->delivered_ce at last ack */
 	u32 next_seq;		/* tp->snd_nxt at round start */
-	u32 round;		/* Round count since last slow-start exit */
-	u32 rtt_transition_delay;
-	u32 rtt_target;		/* RTT scaling target */
-	int saw_ce:1,		/* Is there an AQM on the path? */
-	    rtt_indep:3;	/* RTT independence mode */
+	int saw_ce:1; 		/* Is there an AQM on the path? */
+
 };
 
-struct rtt_scaling_ops {
-	bool (*should_update_ewma)(struct sock *sk);
-	u64 (*ai_ack_increase)(struct sock *sk, u32 rtt);
-	u32 (*target_rtt)(struct sock *sk);
-};
-static struct rtt_scaling_ops rtt_scaling_heuristics[__RTT_CONTROL_MAX];
 
 /* Fallback struct ops if we fail to negotiate AccECN */
 static struct tcp_congestion_ops mprague_reno;
@@ -178,10 +108,10 @@ static void __mprague_connection_id(struct sock *sk, char *str, size_t len)
 	    sport = ntohs(inet_sk(sk)->inet_sport);
 	if (sk->sk_family == AF_INET)
 		snprintf(str, len, "%pI4:%u-%pI4:%u", &sk->sk_rcv_saddr, sport,
-			&sk->sk_daddr, dport);
+				&sk->sk_daddr, dport);
 	else if (sk->sk_family == AF_INET6)
 		snprintf(str, len, "[%pI6c]:%u-[%pI6c]:%u",
-			 &sk->sk_v6_rcv_saddr, sport, &sk->sk_v6_daddr, dport);
+				&sk->sk_v6_rcv_saddr, sport, &sk->sk_v6_daddr, dport);
 }
 #define LOG(sk, fmt, ...) do {						\
 	char __tmp[2 * (INET6_ADDRSTRLEN + 9) + 1] = {0};		\
@@ -220,46 +150,9 @@ static struct mprague *mprague_ca(struct sock *sk)
 	return (struct mprague*)inet_csk_ca(sk);
 }
 
-static bool mprague_is_rtt_indep(struct sock *sk)
-{
-	struct mprague *ca = mprague_ca(sk);
-
-	return ca->rtt_indep != RTT_CONTROL_NONE &&
-		!tcp_in_slow_start(tcp_sk(sk)) &&
-		ca->round >= ca->rtt_transition_delay;
-}
-
-static struct rtt_scaling_ops* mprague_rtt_scaling_ops(struct sock *sk)
-{
-	return &rtt_scaling_heuristics[mprague_ca(sk)->rtt_indep];
-}
-
 static bool mprague_e2e_rtt_elapsed(struct sock *sk)
 {
 	return !before(tcp_sk(sk)->snd_una, mprague_ca(sk)->next_seq);
-}
-
-/* RTT independence on a step AQM requires the competing flows to converge to
- * the same alpha, i.e., the EWMA update frequency might no longer be "once
- * every RTT" */
-static bool mprague_should_update_ewma(struct sock *sk)
-{
-	return mprague_e2e_rtt_elapsed(sk) &&
-		(!mprague_rtt_scaling_ops(sk)->should_update_ewma ||
-		 !mprague_is_rtt_indep(sk) ||
-		 mprague_rtt_scaling_ops(sk)->should_update_ewma(sk));
-}
-
-static u32 mprague_target_rtt(struct sock *sk)
-{
-	return mprague_rtt_scaling_ops(sk)->target_rtt ?
-		mprague_rtt_scaling_ops(sk)->target_rtt(sk) :
-		mprague_ca(sk)->rtt_target;
-}
-
-static u64 mprague_unscaled_ai_ack_increase(struct sock *sk)
-{
-	return 1 << CWND_UNIT;
 }
 
 /* RTT independence will scale the classical 1/W per ACK increase. */
@@ -267,23 +160,7 @@ static void mprague_ai_ack_increase(struct sock *sk)
 {
 	struct mprague *ca = mprague_ca(sk);
 	u64 increase;
-	u32 rtt;
-
-	if (!mprague_rtt_scaling_ops(sk)->ai_ack_increase) {
-		increase = mprague_unscaled_ai_ack_increase(sk);
-		goto exit;
-	}
-
-	rtt = US2RTT(tcp_sk(sk)->srtt_us >> 3);
-	if (ca->round < ca->rtt_transition_delay ||
-	    !rtt || rtt > MAX_SCALED_RTT) {
-		increase = mprague_unscaled_ai_ack_increase(sk);
-		goto exit;
-	}
-
-	increase = mprague_rtt_scaling_ops(sk)->ai_ack_increase(sk, rtt);
-
-exit:
+	increase = 1 << CWND_UNIT;
 	WRITE_ONCE(ca->ai_ack_increase, increase);
 }
 
@@ -319,7 +196,7 @@ static void mprague_update_pacing_rate(struct sock *sk)
 	burst = div_u64(rate, tcp_mss_to_mtu(sk, tp->mss_cache));
 
 	WRITE_ONCE(mprague_ca(sk)->max_tso_burst,
-		   max_t(u32, 1, burst >> mprague_burst_shift));
+			max_t(u32, 1, burst >> mprague_burst_shift));
 	WRITE_ONCE(sk->sk_pacing_rate, rate);
 }
 
@@ -331,11 +208,6 @@ static void mprague_new_round(struct sock *sk)
 	ca->next_seq = tp->snd_nxt;
 	ca->old_delivered_ce = tp->delivered_ce;
 	ca->old_delivered = tp->delivered;
-	if (!tcp_in_slow_start(tp)) {
-		++ca->round;
-		if (!ca->round)
-			ca->round = ca->rtt_transition_delay;
-	}
 	mprague_ai_ack_increase(sk);
 }
 
@@ -381,12 +253,11 @@ static void mprague_update_alpha(struct sock *sk)
 	ca->alpha_stamp = tp->tcp_mstamp;
 
 	WRITE_ONCE(ca->upscaled_alpha,
-		   min(MPRAGUE_MAX_ALPHA << MPRAGUE_SHIFT_G, alpha));
+			min(MPRAGUE_MAX_ALPHA << MPRAGUE_SHIFT_G, alpha));
 
 skip:
 	mprague_new_round(sk);
 }
-
 static void mprague_recalc_beta( const struct sock *sk)
 {
 
@@ -438,8 +309,9 @@ static void mprague_update_cwnd(struct sock *sk, const struct rate_sample *rs)
 	struct mprague *ca = mprague_ca(sk);
 	struct tcp_sock *tp = tcp_sk(sk);
 	int snd_cwnd = 0;
-	u64 increase,beta;
+	u64 increase;
 	s64 acked;
+	u64 beta;
 
 	acked = rs->acked_sacked;
 
@@ -501,11 +373,10 @@ static void mprague_update_cwnd(struct sock *sk, const struct rate_sample *rs)
 	if (snd_cwnd < tp->snd_cwnd)
 		tp->snd_cwnd = snd_cwnd;
 
-
 	increase = acked * ca->ai_ack_increase;
 	if (likely(tp->snd_cwnd))
 		increase = div_u64(increase + (tp->snd_cwnd >> 1),
-				   tp->snd_cwnd);
+				tp->snd_cwnd);
 	ca->cwnd_cnt += max_t(u64, increase, acked);
 
 adjust:
@@ -525,6 +396,7 @@ adjust:
 		tp->snd_cwnd = min(tp->snd_cwnd, tp->snd_cwnd_clamp);
 		mprague_cwnd_changed(sk);
 	}
+
 	mprague_recalc_beta(sk);
 	return;
 }
@@ -547,16 +419,11 @@ static void mprague_enter_cwr(struct sock *sk)
 	struct tcp_sock *tp = tcp_sk(sk);
 	u64 reduction;
 	u64 alpha;
-
-	if (mprague_is_rtt_indep(sk) &&
-	    RTT2US(mprague_target_rtt(sk)) > tcp_stamp_us_delta(tp->tcp_mstamp,
-							       ca->cwr_stamp))
-		return;
 	ca->cwr_stamp = tp->tcp_mstamp;
 	alpha = ca->upscaled_alpha >> MPRAGUE_SHIFT_G;
 	reduction = (alpha * ((u64)tp->snd_cwnd << CWND_UNIT) +
-			 /* Unbias the rounding by adding 1/2 */
-			 MPRAGUE_MAX_ALPHA) >>
+			/* Unbias the rounding by adding 1/2 */
+			MPRAGUE_MAX_ALPHA) >>
 		(MPRAGUE_ALPHA_BITS + 1U);
 	ca->cwnd_cnt -= reduction;
 
@@ -564,24 +431,27 @@ static void mprague_enter_cwr(struct sock *sk)
 }
 
 static void mprague_state(struct sock *sk, u8 new_state)
-{
+{   
+	if (!mptcp(tcp_sk(sk)))
+		return;
+
 	if (new_state == inet_csk(sk)->icsk_ca_state)
 		return;
 
 	switch (new_state) {
-	case TCP_CA_Recovery:
-		mprague_enter_loss(sk);
-		mprague_set_forced(mptcp_meta_sk(sk), 1);
-		break;
-	case TCP_CA_CWR:
-		mprague_enter_cwr(sk);
-		mprague_set_forced(mptcp_meta_sk(sk), 1);
-		break;
+		case TCP_CA_Recovery:
+			mprague_enter_loss(sk);
+			mprague_set_forced(mptcp_meta_sk(sk), 1);
+			break;
+		case TCP_CA_CWR:
+			mprague_enter_cwr(sk);
+			mprague_set_forced(mptcp_meta_sk(sk), 1);
+			break;
 	}
 }
 
 static void mprague_cwnd_event(struct sock *sk, enum tcp_ca_event ev)
-{   
+{
 	struct tcp_sock *tp = tcp_sk(sk);
 	if (!mptcp(tp))
 		return;
@@ -604,8 +474,8 @@ static u32 mprague_cwnd_undo(struct sock *sk)
 static void mprague_cong_control(struct sock *sk, const struct rate_sample *rs)
 {
 	mprague_update_cwnd(sk, rs);
-	if (mprague_should_update_ewma(sk))
-		    mprague_update_alpha(sk);
+	if (mprague_e2e_rtt_elapsed(sk))
+		mprague_update_alpha(sk);
 	mprague_update_pacing_rate(sk);
 }
 
@@ -621,7 +491,6 @@ static u32 mprague_max_tso_seg(struct sock *sk)
 	return mprague_ca(sk)->max_tso_burst;
 }
 
-
 static void mprague_release(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
@@ -633,7 +502,7 @@ static void mprague_release(struct sock *sk)
 		INET_ECN_dontxmit(sk);
 
 	LOG(sk, "Released [delivered_ce=%u,received_ce=%u,received_ce_tx: %u]",
-	    tp->delivered_ce, tp->received_ce, tp->received_ce_tx);
+			tp->delivered_ce, tp->received_ce, tp->received_ce_tx);
 }
 
 static void mprague_init(struct sock *sk)
@@ -643,10 +512,10 @@ static void mprague_init(struct sock *sk)
 
 	/* We're stuck in TCP_ACCECN_PENDING before the 3rd ACK */
 	if ((!mptcp(tp) || !tcp_ecn_ok(tp)) &&
-	    sk->sk_state != TCP_LISTEN && sk->sk_state != TCP_CLOSE) {
+			sk->sk_state != TCP_LISTEN && sk->sk_state != TCP_CLOSE) {
 		mprague_release(sk);
 		LOG(sk, "Switching to pure reno [ecn_status=%u,sk_state=%u]",
-		    tcp_ecn_status(tp), sk->sk_state);
+				tcp_ecn_status(tp), sk->sk_state);
 		inet_csk(sk)->icsk_ca_ops = &mprague_reno;
 		return;
 	}
@@ -662,96 +531,10 @@ static void mprague_init(struct sock *sk)
 	ca->loss_cwnd_cnt = 0;
 	ca->loss_cwnd = 0;
 	ca->max_tso_burst = 1;
-	ca->round = 0;
-	ca->rtt_transition_delay = mprague_rtt_transition;
-	ca->rtt_target = US2RTT(mprague_rtt_target);
-	ca->rtt_indep = ca->rtt_target ? mprague_rtt_scaling : RTT_CONTROL_NONE;
-	if (ca->rtt_indep >= __RTT_CONTROL_MAX)
-		ca->rtt_indep = RTT_CONTROL_NONE;
-	LOG(sk, "RTT indep chosen: %d (after %u rounds), targetting %u usec",
-	    ca->rtt_indep, ca->rtt_transition_delay, mprague_target_rtt(sk));
 	ca->saw_ce = tp->delivered_ce != TCP_ACCECN_CEP_INIT;
 	ca->acked_ce = tp->delivered_ce;
 	mprague_new_round(sk);
 }
-
-static bool mprague_target_rtt_elapsed(struct sock *sk)
-{
-	return RTT2US(mprague_target_rtt(sk)) <=
-		tcp_stamp_us_delta(tcp_sk(sk)->tcp_mstamp,
-				   mprague_ca(sk)->alpha_stamp);
-}
-
-static u64 mprague_rate_scaled_ai_ack_increase(struct sock *sk, u32 rtt)
-{
-	u64 increase;
-	u64 divisor;
-	u64 target;
-
-
-	target = mprague_target_rtt(sk);
-	if (rtt >= target)
-		return mprague_unscaled_ai_ack_increase(sk);
-	/* Scale increase to:
-	 * - Grow by 1MMS/target RTT
-	 * - Take into account the rate ratio of doing cwnd += 1MSS
-	 *
-	 * Overflows if e2e RTT is > 100ms, hence the cap
-	 */
-	increase = (u64)rtt << CWND_UNIT;
-	increase *= rtt;
-	divisor = target * target;
-	increase = div64_u64(increase + (divisor >> 1), divisor);
-	return increase;
-}
-
-static u64 mprague_scalable_ai_ack_increase(struct sock *sk, u32 rtt)
-{
-	/* R0 ~= 16ms, R1 ~= 1.5ms */
-	const s64 R0 = US2RTT(1 << 14), R1 = US2RTT((1 << 10) + (1 << 9));
-	u64 increase;
-	u64 divisor;
-
-	/* Scale increase to:
-	 * - Ensure a growth of at least 1/8th, i.e., one mark every 8 RTT.
-	 * - Take into account the rate ratio of doing cwnd += 1MSS
-	 */
-	increase = (ONE_CWND >> 3) * R0;
-	increase += ONE_CWND * min_t(s64, max_t(s64, rtt - R1, 0), R0);
-	increase *= rtt;
-	divisor = R0 * R0;
-	increase = div64_u64(increase + (divisor >> 1), divisor);
-	return increase;
-}
-
-static u32 mprague_dynamic_rtt_target(struct sock *sk)
-{
-	return mprague_ca(sk)->rtt_target + US2RTT(tcp_sk(sk)->srtt_us >> 3);
-}
-
-static struct rtt_scaling_ops
-rtt_scaling_heuristics[__RTT_CONTROL_MAX] __read_mostly = {
-	[RTT_CONTROL_NONE] = {
-		.should_update_ewma = NULL,
-		.ai_ack_increase = NULL,
-		.target_rtt = NULL,
-	},
-	[RTT_CONTROL_RATE] = {
-		.should_update_ewma = mprague_target_rtt_elapsed,
-		.ai_ack_increase = mprague_rate_scaled_ai_ack_increase,
-		.target_rtt = NULL,
-	},
-	[RTT_CONTROL_SCALABLE] = {
-		.should_update_ewma = mprague_target_rtt_elapsed,
-		.ai_ack_increase = mprague_scalable_ai_ack_increase,
-		.target_rtt = NULL,
-	},
-	[RTT_CONTROL_ADDITIVE] = {
-		.should_update_ewma = mprague_target_rtt_elapsed,
-		.ai_ack_increase = mprague_rate_scaled_ai_ack_increase,
-		.target_rtt = mprague_dynamic_rtt_target
-	},
-};
 
 static struct tcp_congestion_ops mprague __read_mostly = {
 	.init		= mprague_init,
@@ -761,6 +544,7 @@ static struct tcp_congestion_ops mprague __read_mostly = {
 	.ssthresh	= mprague_ssthresh,
 	.undo_cwnd	= mprague_cwnd_undo,
 	.set_state	= mprague_state,
+
 	.max_tso_segs	= mprague_max_tso_seg,
 	.flags		= TCP_CONG_NEEDS_ECN | TCP_CONG_NEEDS_ACCECN |
 		TCP_CONG_WANTS_ECT_1 | TCP_CONG_NON_RESTRICTED,
