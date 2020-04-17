@@ -87,7 +87,7 @@ struct prague {
 	u32 old_delivered_ce;	/* tp->delivered_ce at round start */
 	u32 acked_ce;		/* tp->delivered_ce at last ack */
 	u32 next_seq;		/* tp->snd_nxt at round start */
-	int saw_ce:1,		/* Is there an AQM on the path? */
+	int saw_ce:1;		/* Is there an AQM on the path? */
 
 };
 
@@ -389,7 +389,6 @@ static size_t prague_get_info(struct sock *sk, u32 ext, int *attr,
 			info->prague.prague_alpha =
 				ca->upscaled_alpha >> PRAGUE_SHIFT_G;
 			info->prague.prague_max_burst = ca->max_tso_burst;
-			info->prague.prague_rtt_cwnd = READ_ONCE(ca->ai_ack_increase);
 
 		}
 		*attr = INET_DIAG_PRAGUEINFO;
