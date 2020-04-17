@@ -208,8 +208,9 @@ struct tcp_bbr_info {
 };
 /* INET_DIAG_PRAGUEINFO */
 struct tcp_prague_info {
-	__u32	prague_alpha;
-	__u32	prague_max_burst;
+	__u32	prague_alpha;  /* Congestion level EWMA */
+	__u32	prague_max_burst; /* Max GSO burst size */
+        __u8	prague_enabled;	  /* Whether this is prague or reno */
 };
 union tcp_cc_info {
 	struct tcpvegas_info	vegas;
