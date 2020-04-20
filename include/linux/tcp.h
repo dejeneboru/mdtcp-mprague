@@ -358,6 +358,16 @@ struct tcp_sock {
 	u32	pushed_seq;	/* Last pushed seq, required to talk to windows */
 	u32	lost_out;	/* Lost packets			*/
 	u32	sacked_out;	/* SACK'd packets			*/
+        /* mdtcp subflow parameters*/
+        u32 old_delivered;
+        u32 old_delivered_ce;
+        u32 prior_rcv_nxt;
+        u32 mdtcp_alpha;
+        u32 next_seq;
+        u32 ce_state;
+        u32 loss_cwnd;
+        /* end mdtcp */
+
 
 	struct hrtimer	pacing_timer;
 	struct hrtimer	compressed_ack_timer;

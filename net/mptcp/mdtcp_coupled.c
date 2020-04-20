@@ -33,13 +33,6 @@
 struct mdtcp {
 	u64  beta;
 	bool forced_update;
-	u32 old_delivered;
-	u32 old_delivered_ce;
-	u32 prior_rcv_nxt;
-	u32 mdtcp_alpha;
-	u32 next_seq;
-	u32 ce_state;
-	u32 loss_cwnd;
 };
 
 
@@ -90,39 +83,39 @@ static inline void mdtcp_set_forced(const struct sock *meta_sk, bool force)
 	((struct mdtcp *)inet_csk_ca(meta_sk))->forced_update = force;
 } 
 
-static void mdtcp_reset(const struct tcp_sock *tp, struct mdtcp *ca)
+static void mdtcp_reset(const struct tcp_sock *tp)
 {
-	ca->next_seq = tp->snd_nxt;
+	tp->next_seq = tp->snd_nxt;
 
-	ca->old_delivered = tp->delivered;
-	ca->old_delivered_ce = tp->delivered_ce;
+	tp->old_delivered = tp->delivered;
+	tp->old_delivered_ce = tp->delivered_ce;
 }
 
 static u32 mdtcp_ssthresh(struct sock *sk)
 {
-	struct mdtcp *ca = inet_csk_ca(sk);
+	
 	struct tcp_sock *tp = tcp_sk(sk);
 
-	ca->loss_cwnd = tp->snd_cwnd;
-	return max(tp->snd_cwnd - ((tp->snd_cwnd * ca->mdtcp_alpha) >> 11U), 2U);
+	tp->loss_cwnd = tp->snd_cwnd;
+	return max(tp->snd_cwnd - ((tp->snd_cwnd * tp->mdtcp_alpha) >> 11U), 2U);
 }
 
 static void mdtcp_update_alpha(struct sock *sk, u32 flags)
 {
-	const struct tcp_sock *tp = tcp_sk(sk);
-	struct mdtcp *ca = inet_csk_ca(sk);
+	struct tcp_sock *tp = tcp_sk(sk);
+	
 
 	/* Expired RTT */
-	if (!before(tp->snd_una, ca->next_seq)) {
-		u32 delivered_ce = tp->delivered_ce - ca->old_delivered_ce;
-		u32 alpha = ca->mdtcp_alpha;
+	if (!before(tp->snd_una, tp->next_seq)) {
+		u32 delivered_ce = tp->delivered_ce - tp->old_delivered_ce;
+		u32 alpha = tp->mdtcp_alpha;
 
 		/* alpha = (1 - g) * alpha + g * F */
 
 		//alpha -= min_not_zero(alpha, alpha >> mdtcp_shift_g);
 		alpha -= alpha >> mdtcp_shift_g;
                 if (delivered_ce) {
-			u32 delivered = tp->delivered - ca->old_delivered;
+			u32 delivered = tp->delivered - tp->old_delivered;
 
 			/* If dctcp_shift_g == 1, a 32bit value would overflow
 			 *              * after 8 M packets.
@@ -136,16 +129,14 @@ static void mdtcp_update_alpha(struct sock *sk, u32 flags)
 		 *          * synchro, so we ask compiler to not use dctcp_alpha
 		 *                   * as a temporary variable in prior operations.
 		 *                            */
-		WRITE_ONCE(ca->mdtcp_alpha, alpha);
-		mdtcp_reset(tp, ca);
+		WRITE_ONCE(tp->mdtcp_alpha, alpha);
+		mdtcp_reset(tp);
 	}
 }
 
 static u32 mdtcp_cwnd_undo(struct sock *sk)
 {
-	const struct mdtcp *ca = inet_csk_ca(sk);
-
-	return max(tcp_sk(sk)->snd_cwnd, ca->loss_cwnd);
+	return max(tcp_sk(sk)->snd_cwnd, tcp_sk(sk)->loss_cwnd);
 }
 
 static void mdtcp_recalc_beta( const struct sock *sk)
@@ -190,7 +181,7 @@ static void mdtcp_recalc_beta( const struct sock *sk)
 	}
 
 	if (unlikely(!beta))
-		beta = beta_scale;
+		beta = 1;
 
 exit:
 	mdtcp_set_beta(mptcp_meta_sk(sk), beta);
@@ -200,8 +191,7 @@ exit:
 static void mdtcp_init(struct sock *sk)
 {       
 
-	const struct tcp_sock *tp = tcp_sk(sk);
-	struct mdtcp *ca = inet_csk_ca(sk);
+	struct tcp_sock *tp = tcp_sk(sk);
 	if (mptcp(tcp_sk(sk)) && (tcp_ecn_ok(tp) ||
 				(sk->sk_state == TCP_LISTEN ||
 				 sk->sk_state == TCP_CLOSE))) {
@@ -209,13 +199,13 @@ static void mdtcp_init(struct sock *sk)
 		mdtcp_set_forced(mptcp_meta_sk(sk), 0);
 		mdtcp_set_beta(mptcp_meta_sk(sk), beta_scale);
 
-		ca->prior_rcv_nxt = tp->rcv_nxt;
-		ca->mdtcp_alpha = min(mdtcp_alpha_on_init, MDTCP_MAX_ALPHA);
+		tp->prior_rcv_nxt = tp->rcv_nxt;
+		tp->mdtcp_alpha = min(mdtcp_alpha_on_init, MDTCP_MAX_ALPHA);
 
-		ca->loss_cwnd = 0;
-		ca->ce_state = 0;
+		tp->loss_cwnd = 0;
+		tp->ce_state = 0;
 
-		mdtcp_reset(tp, ca);
+		mdtcp_reset(tp);
 		return;
 
 	} else if (!mptcp(tcp_sk(sk)) && (tcp_ecn_ok(tp) ||
@@ -223,11 +213,11 @@ static void mdtcp_init(struct sock *sk)
 				 sk->sk_state == TCP_CLOSE))) {
 
 
-		ca->prior_rcv_nxt = tp->rcv_nxt;
-		ca->mdtcp_alpha = min(mdtcp_alpha_on_init, MDTCP_MAX_ALPHA);
-		ca->loss_cwnd = 0;
-		ca->ce_state = 0;
-		mdtcp_reset(tp, ca);
+		tp->prior_rcv_nxt = tp->rcv_nxt;
+		tp->mdtcp_alpha = min(mdtcp_alpha_on_init, MDTCP_MAX_ALPHA);
+		tp->loss_cwnd = 0;
+		tp->ce_state = 0;
+		mdtcp_reset(tp);
 		return;
 
 	}
@@ -240,10 +230,9 @@ static void mdtcp_init(struct sock *sk)
 
 static void mdtcp_react_to_loss(struct sock *sk)
 {
-	struct mdtcp *ca = inet_csk_ca(sk);
 	struct tcp_sock *tp = tcp_sk(sk);
 
-	ca->loss_cwnd = tp->snd_cwnd;
+	tp->loss_cwnd = tp->snd_cwnd;
 	/* Stay fair with reno/cubic (RFC-style) */
 	tp->snd_ssthresh = max(tp->snd_cwnd >> 1U, 2U);
 }
@@ -293,7 +282,7 @@ static void mdtcp_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 	 * was not yet attached to the sock, and thus initializing beta failed.
 	 */
 	if (unlikely(!beta))
-		beta = beta_scale;
+		beta = 1;
 
 	snd_cwnd = (int) div_u64(beta, beta_scale);
 
@@ -320,13 +309,12 @@ static void mdtcp_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 
 static void mdtcp_cwnd_event(struct sock *sk, enum tcp_ca_event ev)
 {
-	struct mdtcp *ca = inet_csk_ca(sk);
 	struct tcp_sock *tp = tcp_sk(sk);
 
 	switch (ev) {
 		case CA_EVENT_ECN_IS_CE:
 		case CA_EVENT_ECN_NO_CE:
-			mdtcp_ece_ack_update(sk, ev, &ca->prior_rcv_nxt, &ca->ce_state);
+			mdtcp_ece_ack_update(sk, ev, &tp->prior_rcv_nxt, &tp->ce_state);
 			break;
 		case CA_EVENT_LOSS:
 			mdtcp_react_to_loss(sk);
