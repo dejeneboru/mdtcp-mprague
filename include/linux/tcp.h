@@ -367,6 +367,12 @@ struct tcp_sock {
         u32 ce_state;
         u32 loss_cwnd;
         /* end mdtcp */
+        /* additional mprague parameters*/
+        u64 upscaled_alpha;
+        u32 max_tso_burst;
+        bool was_ce;
+        bool saw_ce;
+        /*mprague end */
 
 
 	struct hrtimer	pacing_timer;
