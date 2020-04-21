@@ -37,7 +37,7 @@ static struct tcp_congestion_ops mprague_reno;
 struct mprague {
 	u64  beta;
 	bool forced_update;
-	
+        u32 max_tso_burst;	
 };
 
 
@@ -79,6 +79,8 @@ static inline int mprague_sk_can_send(const struct sock *sk)
 	return mptcp_sk_can_send(sk) && tcp_sk(sk)->srtt_us;
 }
 
+
+
 static inline u64 mprague_get_beta(const struct sock *meta_sk)
 {
 	return ((struct mprague *)inet_csk_ca(meta_sk))->beta;
@@ -105,18 +107,19 @@ static struct mprague *mprague_ca(struct sock *sk)
 }
 
 static u32 mprague_max_tso_seg(struct sock *sk)
-{
-	return mprague_ca(sk)->max_tso_burst;
+{          
+	   return mprague_ca(sk)->max_tso_burst;
 }
+
 
 static bool mprague_rtt_complete(struct sock *sk)
 {
 	/* At the moment, we detect expired RTT using cwnd completion */
-	return !before(tcp_sk(sk)->snd_una, mprague_ca(sk)->next_seq);
+	return !before(tcp_sk(sk)->snd_una, tcp_sk(sk)->next_seq);
 }
 
 
-static void mprague_reset(const struct tcp_sock *tp)
+static void mprague_reset(struct tcp_sock *tp)
 {
 	tp->next_seq = tp->snd_nxt;
 	tp->old_delivered_ce = tp->delivered_ce;
@@ -175,7 +178,7 @@ static void mprague_update_pacing_rate(struct sock *sk)
 	}
 
 	max_burst = max_t(u32, 1, max_burst);
-	WRITE_ONCE(tp->max_tso_burst, max_burst);
+	WRITE_ONCE(mprague_ca(sk)->max_tso_burst, max_burst);
 }
 
 
@@ -311,6 +314,7 @@ static void mprague_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 static void mprague_update_window(struct sock *sk,
 		const struct rate_sample *rs)
 {
+	struct tcp_sock *tp = tcp_sk(sk);
 	/* Do not increase cwnd for ACKs indicating congestion */
 	if (rs->is_ece ) {
 		tp->saw_ce = true;
@@ -391,13 +395,13 @@ static void mprague_cwnd_event(struct sock *sk, enum tcp_ca_event ev)
 
 	switch(ev) {
 		case CA_EVENT_ECN_IS_CE:
-			mprague_ca(sk)->was_ce = true;
+			tp->was_ce = true;
 			break;
 		case CA_EVENT_ECN_NO_CE:
-			if (mprague_ca(sk)->was_ce)
+			if (tp->was_ce)
 				/* Immediately ACK a trail of CE packets */
 				inet_csk(sk)->icsk_ack.pending |= ICSK_ACK_NOW;
-			mprague_ca(sk)->was_ce = false;
+			tp->was_ce = false;
 			break;
 		case CA_EVENT_LOSS:
 			/* React to a RTO if no other loss-related events happened
@@ -413,8 +417,10 @@ static void mprague_cwnd_event(struct sock *sk, enum tcp_ca_event ev)
 }
 
 static u32 mprague_cwnd_undo(struct sock *sk)
-{
-	return max(tcp_sk(sk)->snd_cwnd, tp->loss_cwnd);
+{       
+	struct tcp_sock *tp = tcp_sk(sk);
+
+	return max(tp->snd_cwnd, tp->loss_cwnd);
 }
 
 
@@ -448,8 +454,7 @@ static void mprague_init(struct sock *sk)
 		tp->upscaled_alpha = MPRAGUE_MAX_ALPHA << mprague_shift_g;
 		tp->loss_cwnd = 0;
 		tp->saw_ce = tp->delivered_ce != TCP_ACCECN_CEP_INIT;
-		/* Conservatively start with a very low TSO limit */
-		tp->max_tso_burst = 1;
+		mprague_ca(sk)->max_tso_burst = 1;
 		if (mprague_ect)
 			tp->ecn_flags |= TCP_ECN_ECT_1;
 
